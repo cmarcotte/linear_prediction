@@ -13,6 +13,7 @@ Options:
 --w2file=<ufile>	w2 file
 --Ufile=<Ufile>	initial condition file
 --u0file=<u0file>	rest state file
+--theta=<theta>	origin of perturbation			[default: 6]
 '''
 
 import h5py
@@ -170,6 +171,19 @@ def defineMUandPHI(x, u, U, w1, w2, v1, v2, L, N, shifty, spl=True, test=True):
 	dw1 = np.array(dw1)
 	dw1=dw1.T # for some reason the array becomes (2,N) rather than (N,2)
 	
+	# form dv1 from v1
+	dv1 = []
+	
+	for m in range(np.shape(v1)[1]):
+		if spl:
+			spl = interpolant(x, v1[:,m], k=5)
+			spl = spl.derivative(1)
+			dv1.append(spl(x))
+		else:
+			dv1.append(fdiff(v1[:,m],order=1,period=L))
+	dv1 = np.array(dv1)
+	dv1=dv1.T # for some reason the array becomes (2,N) rather than (N,2)
+	
 	if shifty == 1:
 		# define generic vectors for mu and Phi defs
 		V1 = w1
@@ -188,7 +202,7 @@ def defineMUandPHI(x, u, U, w1, w2, v1, v2, L, N, shifty, spl=True, test=True):
 	elif shifty == 4:
 		# define generic vectors for mu and Phi defs
 		V1 = v1
-		V2 = dw1
+		V2 = dv1
 
 	elif shifty == 5:
 		# define generic vectors for mu and Phi defs
@@ -381,17 +395,17 @@ def threshold_linpred(x, u, U, w1, mu, Phi, tol, X, L, N, spl=True):
 
 	# filter SS such that |QQ'(s = SS)| > tol, i.e., an "isolated" zero
 	ind = np.ravel(np.where(np.abs(QQ.derivative(1)(SS)) > tol))
-	print(f'\tlen(S) = {len(SS)} -> {len(ind)}')
+	print(f'Isolating roots...\n\tlen(S) = {len(SS)} -> {len(ind)}')
 	SS = SS[ind]
 
 	# filter SS such that |RR(s = SS) | > tol, i.e., < w_1(x-s) | X(x)> =/= 0
 	ind = np.ravel(np.where(np.abs(RR(SS)) > tol))
-	print(f'\tlen(S) = {len(SS)} -> {len(ind)}')
+	print(f'Non-trivial projections...\n\tlen(S) = {len(SS)} -> {len(ind)}')
 	SS = SS[ind]
 
 	# filter SS such that |P(s = SS)| < 1/tol, i.e., P(s) is not ~inf
 	ind = np.ravel(np.where(np.abs(PP(SS)) < 1.0/tol))
-	print(f'\tlen(S) = {len(SS)} -> {len(ind)}')
+	print(f'Finite perturbation amplitude...\n\tlen(S) = {len(SS)} -> {len(ind)}')
 	SS = SS[ind]
 
 	# order SS by decreasing |R(SS)|
@@ -439,26 +453,21 @@ def generatelinpredcurve(x, u, U, w1, mu, Phi, tol, XX, L, N):
 			PP = interpolant(x[ind], P[ind])
 
 			fig, ax = plt.subplots(3, 1, sharex=True, figsize=(3,8))
-			fig.suptitle(r'Linear theory prediction, $x_s={0:2.2f}$'.format(xs))
+			fig.suptitle('Linear theory prediction\n'+r'$x_s={0:2.2f}$'.format(xs))
 			Qnrm = np.max(np.abs(Q))
 			ax[0].plot(x, Q/Qnrm, '-k', label=r'$Q(s)$')
 
 			ax[0].set_yscale('symlog')
 			ax[0].set_ylim([-1.1,+1.1])
-			plt.setp(ax[0].get_yticklabels(), visible=False)
-			ax[0].legend(loc=0)
+			ax[0].set_yticks([0.0])
+			ax[0].set_ylabel(r"$Q(s)/\sup_s \, Q(s)$")
 
 			ax[1].plot(x, R, '-k', label=r'$R(s)$')
-			ax[1].plot(x, tol*np.ones_like(x), '-r', linewidth=0.5)
-			if np.min(R) > 0:
-				ax[1].set_yscale('log')
-			else:
-				ax[1].set_yscale('symlog')
-			ax[1].legend(loc=0)
+			ax[1].set_ylabel(r"$R(s)$")
 
 			ax[2].plot(x, P, '-k', label=r'$P(s)$')
 			ax[2].set_yscale('symlog')
-			ax[2].legend(loc=0)
+			ax[2].set_ylabel(r"$P(s)$")
 
 			plt.xlabel(r'$s$')
 
@@ -470,16 +479,16 @@ def generatelinpredcurve(x, u, U, w1, mu, Phi, tol, XX, L, N):
 				ax[0].plot(s[0], QQ(s[0])/Qnrm, 'or', markerfacecolor='none')
 				ax[1].plot(s[0], RR(s[0]), 'or', markerfacecolor='none')
 				ax[2].plot(s[0], PP(s[0]), 'or', markerfacecolor='none')
-
-				plim = np.max(np.abs(PP(s)))
-				if np.isnan(plim):
-					plim = np.inf
-				plim = np.min([plim, 1.0/np.spacing(1.0)])
+				
+				ind = np.abs(R) > tol
+				plim = np.max(np.abs(P[ind]))
+				if np.isnan(plim) or np.isinf(plim):
+					plim = 0.5/tol
 				ax[2].set_ylim([-2*plim,+2*plim])
 			except:
 				pass
 
-
+			plt.tight_layout()
 			plt.savefig(f'{savedir}/linear_theory.svg',bbox_inches='tight')
 			plt.close()
 
@@ -542,17 +551,17 @@ def computecurves(x, U, u, v1, v2, w1, w2, XX, L, N, theta, shifty, savedir='./'
 
 	# plot the predicted critical curve
 	fig, ax = plt.subplots(2, 1, sharex=True, figsize=(6,6))
-
-	ax[0].plot(XS, US, '.')
-	ax[0].set_yscale('symlog')
-	ax[0].set_ylabel(r'$U_s$')
-	ax[1].plot(XS, SS, '.')
-	ax[1].set_xscale('log')
-	ax[1].set_ylim([0,L])
-	ax[1].legend(loc=0)
-	ax[1].set_xlabel(r'$x_s$')
-	ax[1].set_ylabel(r'$s$')
-	plt.savefig(f'{savedir}/crit_{shifty}.svg')
+	if len(SS) > 0:
+		ax[0].plot(XS, US, '.')
+		ax[0].set_yscale('symlog')
+		ax[0].set_ylabel(r'$U_s$')
+		ax[1].plot(XS, SS, '.')
+		ax[1].set_xscale('log')
+		ax[1].set_ylim([0,L])
+		ax[1].legend(loc=0)
+		ax[1].set_xlabel(r'$x_s$')
+		ax[1].set_ylabel(r'$s$')
+		plt.savefig(f'{savedir}/crit_{shifty}.svg')
 	plt.close()
 
 	# save results to file
@@ -573,7 +582,9 @@ def computecurves(x, U, u, v1, v2, w1, w2, XX, L, N, theta, shifty, savedir='./'
 		savefile.create_dataset('XS', 	data=XS)
 		savefile.create_dataset('SS', 	data=SS)
 		savefile.create_dataset('US', 	data=US)
-
+		
+		savefile.create_dataset('TH',		data=theta)
+	
 	return (XS, SS, US)
 
 # now for the main part
@@ -596,6 +607,8 @@ if __name__ == '__main__':
 	w2file = args['--w2file']
 	v1file = args['--v1file']
 	v2file = args['--v2file']
+	
+	theta = int(args['--theta'])
 
 	# get u0 from specific file
 	u0 = np.loadtxt(u0file)
@@ -662,32 +675,7 @@ if __name__ == '__main__':
 	# since u0'(x) == 0, we broadcast on to the domain of x
 	u0 = np.ones((N,1))*np.reshape(u0,[1,len(u0[:])])
 	
-	# find where u max deviates from u0
-	s = x[np.argmax(varsum((U-u0)**2))]
-	
-	# shift U by s so that x[np.argmin(varsum((U-u0)**2))] == 0.0
-	print('Centering U at x=L/2')
-	U  = translate(U, (L/2)-s,L,N)
-	
-	# find where u max deviates from u0
-	s = x[np.argmax(varsum((u-u0)**2))]
-	
-	# shift u,v1,v2,w1,w2 by s so that x[np.argmin(varsum((u-u0)**2))] == 0.0
-	print('Centering u, v1, v2, w1, and w2 at x=L/2')
-	u  = translate(u, (L/2)-s,L,N)
-	v1 = translate(v1,(L/2)-s,L,N)
-	v2 = translate(v2,(L/2)-s,L,N)
-	w1 = translate(w1,(L/2)-s,L,N)
-	w2 = translate(w2,(L/2)-s,L,N)
-
-	# normalize (w,v)
-	w1v1 = innpro(w1,v1,L,N)
-	w2v2 = innpro(w2,v2,L,N)
-	#print(f'w1v1={w1v1},w2v2={w2v2}')
-	for m in range(np.shape(u)[1]):
-		w1[:,m] = w1[:,m]/w1v1
-		w2[:,m] = w2[:,m]/w2v2
-	
+	# check normalization of eigenfunctions
 	A = np.zeros((2,2)); B = np.zeros((2,2));
 	A[0,0] = innpro(w1,v1,L,N)
 	A[0,1] = innpro(w1,v2,L,N)
@@ -715,11 +703,7 @@ if __name__ == '__main__':
 	plt.close()
 	
 	# define the perturbation origin
-	theta=np.nan
-	if np.isnan(theta):
-		x0 = L/2
-	else:
-		x0 = L/2 + (theta-6)*L/20
+	x0 = np.minimum(np.maximum(0.0,L/2 + (theta-6)*L/20),L)
 	
 	# define the perturbation shape function, XX(xs) -> X(x)
 	# this implies, e.g., that theta is fixed at definition
@@ -751,40 +735,3 @@ if __name__ == '__main__':
 		plt.savefig(f'{savedir}/crit_all.svg')
 	plt.close()
 	
-	'''
-	# generate the figure detailing how roots vanish
-
-	# get mu and Phi funcs
-	mu, Phi, tol = defineMUandPHI(x, u, 0.0*U, w1, w2, v1, v2, L, N, 3, test=False)
-
-	fig, ax = plt.subplots(3, 1, sharex=True, sharey=True, figsize=(3,8))
-
-	ax[0].plot(x, Phi(0.0)[:,0]/np.max(np.abs(Phi(0.0)[:,0])),'-k')
-	ax[0].set_title(r'$\Phi_3(x)$')
-
-	for n, xs in enumerate([L/12,L/6]):
-
-		X = XX(xs,L/5)
-
-		mm = interpolant(x,mu(X),k=3,s=0)
-		ss = mm.roots()
-		ind = np.ravel(np.where((ss>180.0)*(ss<250.0)))
-		ss=ss[ind]
-
-		#col = np.random.rand(3)
-
-		ax[1].plot(x, X[:,0], '-', linewidth=1, label=r'$x_s={0:2.2f}L$'.format(xs/L))
-		ax[1].set_title(r'$X(x; x_s)$')
-		ax[1].legend(loc=0)
-
-		ax[2].plot(x, mu(X)/np.max(np.abs(mu(X))), '-', linewidth=1)
-		ax[2].plot(ss, mm(ss)/np.max(np.abs(mu(X))), '.k', markersize=2)
-		ax[2].set_title(r'$(\Phi_3(x-s) \star X(x; x_s))$')
-
-	ax[0].set_xlabel(r'$x$')
-	ax[1].set_xlabel(r'$x$')
-	ax[2].set_xlabel(r'$s$')
-
-	plt.savefig(f'{savedir}/X_Phi_mu.pdf',bbox_inches='tight')
-	plt.close()
-	'''
