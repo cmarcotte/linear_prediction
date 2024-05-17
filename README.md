@@ -15,4 +15,6 @@ Requires (see `requirements.txt`, `python -m venv` is recommended):
 
 Optionally, `ffmpeg` may be used to create an animation of the continuation process by uncommenting line 25 in `run.sh`.
 
+The corresponding DNS calculation code is available [here](https://github.com/cmarcotte/dedalus_fhn_quenching).
+
 [^1]: `run.sh` is written for `zsh`; minor edits may be needed for other shells.
